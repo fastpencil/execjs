@@ -35,7 +35,7 @@ module ExecJS
 
       protected
         def compile_to_tempfile(source)
-          tempfile = Tempfile.open(['execjs', '.js'])
+          tempfile = Tempfile.open(['execjs', '.js'], @tmpdir)
           tempfile.write compile(source)
           tempfile.close
           yield tempfile
@@ -96,38 +96,18 @@ module ExecJS
       @test_match  = options[:test_match]
       @encoding    = options[:encoding]
       @deprecated  = !!options[:deprecated]
-      @binary      = nil
+      @binary      = '/usr/local/bin/node'
+      @tmpdir      = File.directory?('/mnt/fp2') ? '/mnt/fp2' : '/tmp/fp2'
     end
 
     def available?
       require "execjs/json"
-      binary ? true : false
+      true
     end
 
     def deprecated?
       @deprecated
     end
-
-    private
-      def binary
-        @binary ||= locate_binary
-      end
-
-      def locate_executable(cmd)
-        if ExecJS.windows? && File.extname(cmd) == ""
-          cmd << ".exe"
-        end
-
-        if File.executable? cmd
-          cmd
-        else
-          path = ENV['PATH'].split(File::PATH_SEPARATOR).find { |p|
-            full_path = File.join(p, cmd)
-            File.executable?(full_path) && File.file?(full_path)
-          }
-          path && File.expand_path(cmd, path)
-        end
-      end
 
     protected
       def runner_source
@@ -135,7 +115,7 @@ module ExecJS
       end
 
       def exec_runtime(filename)
-        output = sh("#{shell_escape(*(binary.split(' ') << filename))} 2>&1")
+        output = sh("/usr/local/bin/node #{filename} 2>&1")
         if $?.success?
           output
         else
@@ -143,63 +123,13 @@ module ExecJS
         end
       end
 
-      def locate_binary
-        if binary = which(@command)
-          if @test_args
-            output = `#{shell_escape(binary, @test_args)} 2>&1`
-            binary if output.match(@test_match)
-          else
-            binary
-          end
-        end
+      def sh(command)
+        output, options = nil, {}
+        options[:external_encoding] = @encoding if @encoding
+        options[:internal_encoding] = ::Encoding.default_internal || 'UTF-8'
+        IO.popen(command, options) { |f| output = f.read }
+        output
       end
 
-      def which(command)
-        Array(command).find do |name|
-          name, args = name.split(/\s+/, 2)
-          path = locate_executable(name)
-
-          next unless path
-
-          args ? "#{path} #{args}" : path
-        end
-      end
-
-      if "".respond_to?(:force_encoding)
-        def sh(command)
-          output, options = nil, {}
-          options[:external_encoding] = @encoding if @encoding
-          options[:internal_encoding] = ::Encoding.default_internal || 'UTF-8'
-          IO.popen(command, options) { |f| output = f.read }
-          output
-        end
-      else
-        require "iconv"
-
-        def sh(command)
-          output = nil
-          IO.popen(command) { |f| output = f.read }
-
-          if @encoding
-            Iconv.new('UTF-8', @encoding).iconv(output)
-          else
-            output
-          end
-        end
-      end
-
-      if ExecJS.windows?
-        def shell_escape(*args)
-          # see http://technet.microsoft.com/en-us/library/cc723564.aspx#XSLTsection123121120120
-          args.map { |arg|
-            arg = %Q("#{arg.gsub('"','""')}") if arg.match(/[&|()<>^ "]/)
-            arg
-          }.join(" ")
-        end
-      else
-        def shell_escape(*args)
-          Shellwords.join(args)
-        end
-      end
   end
 end
